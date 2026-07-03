@@ -254,8 +254,10 @@ def yookassa_webhook():
 @app.route("/grant", methods=["POST"])
 def manual_grant():
     """Ручная выдача доступа (для тестов и ручных заказов)."""
-    auth = request.headers.get("X-Admin-Token", "")
-    if auth != YOOKASSA_SECRET:
+    auth = request.headers.get("X-Admin-Token", "").strip()
+    expected = YOOKASSA_SECRET.strip()
+    log.info(f"Grant auth check: received={repr(auth[:10])}... expected={repr(expected[:10])}...")
+    if auth != expected:
         return jsonify({"error": "unauthorized"}), 401
 
     body = request.get_json(force=True)
