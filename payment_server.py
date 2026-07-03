@@ -30,6 +30,7 @@ app = Flask(__name__)
 
 YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET  = os.environ.get("YOOKASSA_SECRET", "")
+ADMIN_TOKEN      = os.environ.get("ADMIN_TOKEN", "leanpro-admin-2025")
 GITHUB_TOKEN     = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO      = os.environ.get("GITHUB_REPO", "dmitrybar140984-cmyk/lean-site")
 SMTP_USER        = os.environ.get("SMTP_USER", "")        # ваш @yandex.ru
@@ -255,9 +256,7 @@ def yookassa_webhook():
 def manual_grant():
     """Ручная выдача доступа (для тестов и ручных заказов)."""
     auth = request.headers.get("X-Admin-Token", "").strip()
-    expected = YOOKASSA_SECRET.strip()
-    log.info(f"Grant auth check: received={repr(auth[:10])}... expected={repr(expected[:10])}...")
-    if auth != expected:
+    if auth != ADMIN_TOKEN.strip():
         return jsonify({"error": "unauthorized"}), 401
 
     body = request.get_json(force=True)
