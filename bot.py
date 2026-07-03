@@ -7,6 +7,7 @@ import os
 import json
 import random
 import logging
+import threading
 from datetime import time, datetime
 from pathlib import Path
 
@@ -513,6 +514,16 @@ def main():
         app.add_handler(
             MessageHandler(filters.Chat(GROUP_ID) & filters.ALL, moderate)
         )
+
+    # Запускаем сервер оплаты в отдельном потоке
+    from payment_server import app as flask_app
+    port = int(os.environ.get("PORT", 8080))
+    t = threading.Thread(
+        target=lambda: flask_app.run(host="0.0.0.0", port=port, use_reloader=False),
+        daemon=True,
+    )
+    t.start()
+    log.info(f"Payment server started on port {port}")
 
     log.info("Bot started. Listening...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
