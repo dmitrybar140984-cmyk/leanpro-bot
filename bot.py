@@ -10,7 +10,7 @@ import logging
 from datetime import time, datetime
 from pathlib import Path
 
-import anthropic
+from groq import Groq
 from telegram import Update, ChatMember, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -43,11 +43,11 @@ BOT_TOKEN        = _require("BOT_TOKEN")
 CHANNEL_ID       = int(_require("CHANNEL_ID"))
 GROUP_ID         = int(os.environ.get("GROUP_ID", "0").strip() or "0")
 ADMIN_IDS        = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-AUTO_POST_TIME   = os.environ.get("AUTO_POST_TIME", "09:00").strip()  # время авто-поста МСК
+GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
+AUTO_POST_TIME = os.environ.get("AUTO_POST_TIME", "09:00").strip()
 
 log.info(f"CHANNEL_ID={CHANNEL_ID} | GROUP_ID={GROUP_ID} | ADMIN_IDS={ADMIN_IDS}")
-log.info(f"AI auto-post: {'включён' if ANTHROPIC_KEY else 'выключен (нет ANTHROPIC_API_KEY)'} в {AUTO_POST_TIME}")
+log.info(f"AI auto-post: {'включён' if GROQ_KEY else 'выключен (нет GROQ_API_KEY)'} в {AUTO_POST_TIME}")
 
 SCHEDULE_FILE = Path("schedule.json")
 
@@ -115,7 +115,7 @@ def admin_only(func):
 
 @admin_only
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ai_status = "✅ включён" if ANTHROPIC_KEY else "❌ нет ANTHROPIC_API_KEY"
+    ai_status = "✅ включён" if GROQ_KEY else "❌ нет GROQ_API_KEY"
     await update.message.reply_text(
         "🤖 <b>LeanProRus Bot активен</b>\n\n"
         "<b>AI-публикации:</b>\n"
@@ -392,8 +392,8 @@ def _next_topic() -> tuple[str, str]:
     return LEAN_TOPICS[idx]
 
 async def generate_ai_post(topic_name: str, topic_desc: str) -> str:
-    """Генерирует пост через Claude API."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    """Генерирует пост через Groq API (бесплатно)."""
+    client = Groq(api_key=GROQ_KEY)
     prompt = (
         f"Напиши пост для Telegram-канала о бережливом производстве.\n"
         f"Тема: {topic_desc}\n\n"
@@ -407,16 +407,16 @@ async def generate_ai_post(topic_name: str, topic_desc: str) -> str:
         f"- Без хэштегов\n"
         f"- Только текст поста, без вводных слов типа «Вот пост:»"
     )
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
-    return message.content[0].text.strip()
+    return response.choices[0].message.content.strip()
 
 async def auto_ai_post(ctx: ContextTypes.DEFAULT_TYPE):
     """Ежедневный авто-пост с AI-контентом."""
-    if not ANTHROPIC_KEY:
+    if not GROQ_KEY:
         log.warning("ANTHROPIC_API_KEY не задан — авто-пост пропущен")
         return
     try:
@@ -431,8 +431,8 @@ async def auto_ai_post(ctx: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def cmd_aipost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Ручной запуск AI-поста: /aipost [тема]"""
-    if not ANTHROPIC_KEY:
-        await update.message.reply_text("❌ ANTHROPIC_API_KEY не задан в Variables")
+    if not GROQ_KEY:
+        await update.message.reply_text("❌ GROQ_API_KEY не задан в Variables")
         return
     await update.message.reply_text("⏳ Генерирую пост...")
     try:
@@ -470,7 +470,7 @@ async def post_init(app: Application):
     log.info(f"Restored {restored} daily jobs from schedule.json")
 
     # Авто-пост с AI каждый день в AUTO_POST_TIME
-    if ANTHROPIC_KEY:
+    if GROQ_KEY:
         try:
             h, m = map(int, AUTO_POST_TIME.split(":"))
             app.job_queue.run_daily(
