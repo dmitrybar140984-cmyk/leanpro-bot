@@ -267,8 +267,21 @@ def manual_grant():
         return jsonify({"error": "email and course_id required"}), 400
 
     code = generate_code(email, course_id)
-    add_code_to_credentials(email, course_id, code)
-    send_email(email, course_id, code)
+    log.info(f"Grant: email={email} course={course_id} code={code}")
+
+    try:
+        add_code_to_credentials(email, course_id, code)
+        log.info("credentials.js updated OK")
+    except Exception as e:
+        log.error(f"credentials update failed: {e}")
+        return jsonify({"error": f"github error: {str(e)}"}), 500
+
+    try:
+        send_email(email, course_id, code)
+        log.info("email sent OK")
+    except Exception as e:
+        log.error(f"email send failed: {e}")
+        return jsonify({"error": f"email error: {str(e)}"}), 500
 
     return jsonify({"status": "ok", "code": code}), 200
 
