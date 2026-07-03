@@ -5,10 +5,12 @@ LeanProRus Telegram Bot
 
 import os
 import json
+import random
 import logging
 from datetime import time, datetime
 from pathlib import Path
 
+import anthropic
 from telegram import Update, ChatMember, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -37,14 +39,38 @@ def _require(name: str) -> str:
     log.info(f"✅ {name} загружена")
     return val
 
-BOT_TOKEN  = _require("BOT_TOKEN")
-CHANNEL_ID = int(_require("CHANNEL_ID"))
-GROUP_ID   = int(os.environ.get("GROUP_ID", "0").strip() or "0")
-ADMIN_IDS  = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
+BOT_TOKEN        = _require("BOT_TOKEN")
+CHANNEL_ID       = int(_require("CHANNEL_ID"))
+GROUP_ID         = int(os.environ.get("GROUP_ID", "0").strip() or "0")
+ADMIN_IDS        = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
+ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+AUTO_POST_TIME   = os.environ.get("AUTO_POST_TIME", "09:00").strip()  # время авто-поста МСК
 
 log.info(f"CHANNEL_ID={CHANNEL_ID} | GROUP_ID={GROUP_ID} | ADMIN_IDS={ADMIN_IDS}")
+log.info(f"AI auto-post: {'включён' if ANTHROPIC_KEY else 'выключен (нет ANTHROPIC_API_KEY)'} в {AUTO_POST_TIME}")
 
 SCHEDULE_FILE = Path("schedule.json")
+
+# Темы для ротации AI-постов
+LEAN_TOPICS = [
+    ("5S", "Система 5S: Сортировка, Систематизация, Уборка, Стандартизация, Совершенствование"),
+    ("VSM", "Картирование потока создания ценности (VSM): как видеть и устранять потери"),
+    ("Кайдзен", "Кайдзен: философия непрерывных малых улучшений"),
+    ("Канбан", "Канбан: визуальное управление потоком и WIP-лимиты"),
+    ("Такт-тайм", "Такт-тайм: ритм производства в соответствии со спросом клиента"),
+    ("8 видов потерь", "8 видов муда: перепроизводство, ожидание, транспортировка, лишние движения, дефекты, запасы, излишняя обработка, неиспользованный потенциал"),
+    ("SMED", "SMED: быстрая переналадка оборудования за минуты вместо часов"),
+    ("TPM", "TPM: всеобщее обслуживание оборудования и роль операторов"),
+    ("Poka-Yoke", "Poka-Yoke: защита от ошибок и создание надёжных процессов"),
+    ("Стандартизация", "Стандартизированная работа: основа стабильности и базис для улучшений"),
+    ("Heijunka", "Heijunka: выравнивание производства по объёму и номенклатуре"),
+    ("Андон", "Андон и Jidoka: система остановки при отклонении и встроенное качество"),
+    ("Узкое место", "Теория ограничений: как найти и устранить узкое место в потоке"),
+    ("OEE", "OEE (Общая эффективность оборудования): как измерить и повысить"),
+    ("A3", "A3-отчёт: структурированное решение проблем на одном листе"),
+]
+
+TOPIC_FILE = Path("last_topic.json")
 
 # Стоп-слова для модерации (дополни по необходимости)
 SPAM_KEYWORDS = [
@@ -89,14 +115,19 @@ def admin_only(func):
 
 @admin_only
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ai_status = "✅ включён" if ANTHROPIC_KEY else "❌ нет ANTHROPIC_API_KEY"
     await update.message.reply_text(
         "🤖 <b>LeanProRus Bot активен</b>\n\n"
-        "<b>Команды:</b>\n"
-        "/post &lt;текст&gt; — опубликовать пост прямо сейчас\n"
+        "<b>AI-публикации:</b>\n"
+        f"/aipost — опубликовать AI-пост прямо сейчас\n"
+        f"/aipost &lt;тема&gt; — пост на произвольную тему\n"
+        f"Авто-пост ежедневно в {AUTO_POST_TIME}: {ai_status}\n\n"
+        "<b>Ручные посты:</b>\n"
+        "/post &lt;текст&gt; — опубликовать текст прямо сейчас\n"
         "/daily ЧЧ:ММ &lt;текст&gt; — ежедневный пост в указанное время\n"
         "/once ДД.ММ ЧЧ:ММ &lt;текст&gt; — разовый пост в дату и время\n"
         "/list — список запланированных постов\n"
-        "/cancel &lt;id&gt; — отменить запланированный пост\n"
+        "/cancel &lt;id&gt; — отменить пост\n"
         "/stats — статистика канала\n\n"
         "💡 Посты поддерживают HTML: &lt;b&gt;, &lt;i&gt;, &lt;a href='...'&gt;",
         parse_mode="HTML"
@@ -349,6 +380,73 @@ async def cmd_unban(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
+# ─── AI CONTENT GENERATION ───────────────────────────────────────────────────
+
+def _next_topic() -> tuple[str, str]:
+    """Возвращает следующую тему по кругу."""
+    data = {}
+    if TOPIC_FILE.exists():
+        data = json.loads(TOPIC_FILE.read_text(encoding="utf-8"))
+    idx = (data.get("idx", -1) + 1) % len(LEAN_TOPICS)
+    TOPIC_FILE.write_text(json.dumps({"idx": idx}), encoding="utf-8")
+    return LEAN_TOPICS[idx]
+
+async def generate_ai_post(topic_name: str, topic_desc: str) -> str:
+    """Генерирует пост через Claude API."""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    prompt = (
+        f"Напиши пост для Telegram-канала о бережливом производстве.\n"
+        f"Тема: {topic_desc}\n\n"
+        f"Требования:\n"
+        f"- Длина: 180–250 слов\n"
+        f"- Язык: русский, профессиональный но живой\n"
+        f"- Начни с цепляющего заголовка с эмодзи\n"
+        f"- Дай 2–3 конкретных практических совета или примера\n"
+        f"- В конце абзац: «Изучить подробнее и получить практические инструменты → leanpro.ru»\n"
+        f"- Используй эмодзи для структуры, но не перебарщивай\n"
+        f"- Без хэштегов\n"
+        f"- Только текст поста, без вводных слов типа «Вот пост:»"
+    )
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=600,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip()
+
+async def auto_ai_post(ctx: ContextTypes.DEFAULT_TYPE):
+    """Ежедневный авто-пост с AI-контентом."""
+    if not ANTHROPIC_KEY:
+        log.warning("ANTHROPIC_API_KEY не задан — авто-пост пропущен")
+        return
+    try:
+        topic_name, topic_desc = _next_topic()
+        log.info(f"Генерирую пост на тему: {topic_name}")
+        text = await generate_ai_post(topic_name, topic_desc)
+        await ctx.bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
+        log.info(f"Авто-пост опубликован: {topic_name}")
+    except Exception as e:
+        log.error(f"Ошибка авто-поста: {e}")
+
+@admin_only
+async def cmd_aipost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Ручной запуск AI-поста: /aipost [тема]"""
+    if not ANTHROPIC_KEY:
+        await update.message.reply_text("❌ ANTHROPIC_API_KEY не задан в Variables")
+        return
+    await update.message.reply_text("⏳ Генерирую пост...")
+    try:
+        if ctx.args:
+            topic_name = " ".join(ctx.args)
+            topic_desc = topic_name
+        else:
+            topic_name, topic_desc = _next_topic()
+        text = await generate_ai_post(topic_name, topic_desc)
+        await ctx.bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
+        await update.message.reply_text(f"✅ Пост опубликован! Тема: {topic_name}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
 # ─── STARTUP: restore daily jobs ─────────────────────────────────────────────
 
 async def post_init(app: Application):
@@ -371,6 +469,19 @@ async def post_init(app: Application):
             log.warning(f"Could not restore job {s['id']}: {e}")
     log.info(f"Restored {restored} daily jobs from schedule.json")
 
+    # Авто-пост с AI каждый день в AUTO_POST_TIME
+    if ANTHROPIC_KEY:
+        try:
+            h, m = map(int, AUTO_POST_TIME.split(":"))
+            app.job_queue.run_daily(
+                callback=auto_ai_post,
+                time=time(h, m),
+                name="auto_ai_post",
+            )
+            log.info(f"✅ AI авто-пост запланирован на {AUTO_POST_TIME} ежедневно")
+        except Exception as e:
+            log.error(f"Ошибка планировщика авто-поста: {e}")
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -391,6 +502,7 @@ def main():
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("stats",  cmd_stats))
     app.add_handler(CommandHandler("unban",  cmd_unban))
+    app.add_handler(CommandHandler("aipost", cmd_aipost))
 
     # Welcome new members
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
