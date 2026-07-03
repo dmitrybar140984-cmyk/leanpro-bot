@@ -17,8 +17,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
+import uuid
 import requests
 from flask import Flask, request, jsonify
+from yookassa import Configuration, Payment
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ app = Flask(__name__)
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET  = os.environ.get("YOOKASSA_SECRET", "")
 GITHUB_TOKEN     = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO      = os.environ.get("GITHUB_REPO", "dmitrybar140984-cmyk/lean-site")
@@ -35,6 +38,23 @@ SMTP_HOST        = os.environ.get("SMTP_HOST", "smtp.yandex.ru")
 SMTP_PORT        = int(os.environ.get("SMTP_PORT", "465"))
 
 CREDENTIALS_PATH = "lean-site/credentials.js"
+
+if YOOKASSA_SHOP_ID and YOOKASSA_SECRET:
+    Configuration.account_id = YOOKASSA_SHOP_ID
+    Configuration.secret_key = YOOKASSA_SECRET
+
+COURSE_PRICES = {
+    "lean-intro":      "9900.00",
+    "5s":              "14900.00",
+    "vsm":             "19900.00",
+    "lean-flow":       "19900.00",
+    "lean-leader":     "59900.00",
+    "six-sigma":       "59900.00",
+    "kaizen":          "59900.00",
+    "ladm":            "69900.00",
+    "standard-times":  "19900.00",
+    "corporate":       "1000000.00",
+}
 
 COURSE_NAMES = {
     "lean-intro":      "Введение в Lean",
@@ -145,6 +165,46 @@ def send_email(to_email: str, course_id: str, code: str):
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/create-payment", methods=["POST"])
+def create_payment():
+    """Создаёт платёж в ЮКассе и возвращает URL для оплаты."""
+    body      = request.get_json(force=True)
+    email     = body.get("email", "").strip().lower()
+    course_id = body.get("course_id", "").strip()
+
+    if not email or not course_id:
+        return jsonify({"error": "email and course_id required"}), 400
+    if course_id not in COURSE_PRICES:
+        return jsonify({"error": "unknown course"}), 400
+
+    amount      = COURSE_PRICES[course_id]
+    course_name = COURSE_NAMES.get(course_id, course_id)
+
+    payment = Payment.create({
+        "amount": {"value": amount, "currency": "RUB"},
+        "confirmation": {
+            "type": "redirect",
+            "return_url": f"https://leanprorus.ru/thank-you.html?course={course_id}",
+        },
+        "capture": True,
+        "description": f"Курс «{course_name}»",
+        "receipt": {
+            "customer": {"email": email},
+            "items": [{
+                "description": course_name,
+                "quantity": "1",
+                "amount": {"value": amount, "currency": "RUB"},
+                "vat_code": 1,
+                "payment_mode": "full_payment",
+                "payment_subject": "service",
+            }],
+        },
+        "metadata": {"email": email, "course_id": course_id},
+    }, str(uuid.uuid4()))
+
+    return jsonify({"confirmation_url": payment.confirmation.confirmation_url})
 
 
 @app.route("/webhook/yookassa", methods=["POST"])
