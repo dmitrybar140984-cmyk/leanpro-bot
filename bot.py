@@ -85,7 +85,7 @@ WELCOME_TEXT = (
     "• Общение только по теме Lean, 5S, VSM, Кайдзен, Six Sigma\n"
     "• Без спама, рекламы и ссылок от незнакомцев\n"
     "• Уважайте коллег\n\n"
-    "🎯 Пройдите бесплатный тест на уровень знаний Lean — leanpro.ru/quiz"
+    "🎯 Пройдите бесплатный тест на уровень знаний Lean — leanprorus.ru/quiz"
 )
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -412,7 +412,7 @@ async def generate_ai_post(topic_name: str, topic_desc: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     text = response.choices[0].message.content.strip()
-    footer = '\n\n🔗 Курсы, симуляторы и инструменты Lean: <a href="https://leanpro.ru">leanpro.ru</a>'
+    footer = '\n\n🔗 Курсы, симуляторы и инструменты Lean: <a href="https://leanprorus.ru">leanprorus.ru</a>'
     return text + footer
 
 async def auto_ai_post(ctx: ContextTypes.DEFAULT_TYPE):
