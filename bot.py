@@ -28,10 +28,21 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-BOT_TOKEN  = os.environ["BOT_TOKEN"]
-CHANNEL_ID = int(os.environ["CHANNEL_ID"])   # -100xxxxxxxxxx
-GROUP_ID   = int(os.environ.get("GROUP_ID", "0"))   # linked discussion group (0 = нет)
+# ── проверка переменных окружения ──────────────────────────────────────────
+def _require(name: str) -> str:
+    val = os.environ.get(name, "").strip()
+    if not val:
+        log.error(f"❌ Переменная {name} не задана в Railway Variables!")
+        raise SystemExit(1)
+    log.info(f"✅ {name} загружена")
+    return val
+
+BOT_TOKEN  = _require("BOT_TOKEN")
+CHANNEL_ID = int(_require("CHANNEL_ID"))
+GROUP_ID   = int(os.environ.get("GROUP_ID", "0").strip() or "0")
 ADMIN_IDS  = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
+
+log.info(f"CHANNEL_ID={CHANNEL_ID} | GROUP_ID={GROUP_ID} | ADMIN_IDS={ADMIN_IDS}")
 
 SCHEDULE_FILE = Path("schedule.json")
 
