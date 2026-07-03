@@ -402,7 +402,6 @@ async def generate_ai_post(topic_name: str, topic_desc: str) -> str:
         f"- Язык: русский, профессиональный но живой\n"
         f"- Начни с цепляющего заголовка с эмодзи\n"
         f"- Дай 2–3 конкретных практических совета или примера\n"
-        f"- В конце абзац: «Изучить подробнее и получить практические инструменты → leanpro.ru»\n"
         f"- Используй эмодзи для структуры, но не перебарщивай\n"
         f"- Без хэштегов\n"
         f"- Только текст поста, без вводных слов типа «Вот пост:»"
@@ -412,7 +411,9 @@ async def generate_ai_post(topic_name: str, topic_desc: str) -> str:
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.choices[0].message.content.strip()
+    text = response.choices[0].message.content.strip()
+    footer = '\n\n🔗 Курсы, симуляторы и инструменты Lean: <a href="https://leanpro.ru">leanpro.ru</a>'
+    return text + footer
 
 async def auto_ai_post(ctx: ContextTypes.DEFAULT_TYPE):
     """Ежедневный авто-пост с AI-контентом."""
