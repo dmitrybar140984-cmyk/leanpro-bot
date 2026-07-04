@@ -168,7 +168,12 @@ def send_email(to_email: str, course_id: str, code: str):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok"})
+    token = os.environ.get("GH_ACCESS_TOKEN", "")
+    return jsonify({
+        "status": "ok",
+        "GH_ACCESS_TOKEN": "set" if token else "MISSING",
+        "token_starts": token[:8] if token else "none",
+    })
 
 
 @app.route("/create-payment", methods=["POST"])
