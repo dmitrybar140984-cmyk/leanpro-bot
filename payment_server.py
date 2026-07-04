@@ -1,64 +1,41 @@
 """
 LeanPro Payment Server
-Принимает webhook от ЮКассы, генерирует уникальный код доступа,
-обновляет credentials.js через GitHub API, отправляет email покупателю.
+- /verify      — проверка email+код (вызывается из auth.js)
+- /grant       — ручная выдача доступа (admin)
+- /webhook/yookassa — webhook от ЮКассы после оплаты
+- /health      — статус сервера
 """
 
 import os
 import json
-import hmac
-import base64
-import hashlib
 import logging
 import random
 import string
 import smtplib
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
 
-import uuid
 import requests
 from flask import Flask, request, jsonify
-from yookassa import Configuration, Payment
 
 log = logging.getLogger(__name__)
-
 app = Flask(__name__)
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
-
-# Значения устанавливаются из bot.py после импорта
+# ─── CONFIG (значения передаются из bot.py) ───────────────────────────────────
 YOOKASSA_SHOP_ID = ""
 YOOKASSA_SECRET  = ""
-GITHUB_TOKEN     = ""
-GITHUB_REPO      = "dmitrybar140984-cmyk/lean-site"
 SMTP_USER        = ""
 SMTP_PASSWORD    = ""
 SMTP_HOST        = "smtp.yandex.ru"
 SMTP_PORT        = 465
 ADMIN_TOKEN      = "leanpro-admin-2025"
 
-CREDENTIALS_PATH = "credentials.js"
+# BOT_TOKEN и ADMIN_IDS передаются из bot.py для Telegram-уведомлений
+BOT_TOKEN_REF    = ""
+ADMIN_IDS_REF    = []
 
-log.info(f"GITHUB_REPO: {GITHUB_REPO}")
-
-if YOOKASSA_SHOP_ID and YOOKASSA_SECRET:
-    Configuration.account_id = YOOKASSA_SHOP_ID
-    Configuration.secret_key = YOOKASSA_SECRET
-
-COURSE_PRICES = {
-    "lean-intro":      "9900.00",
-    "5s":              "14900.00",
-    "vsm":             "19900.00",
-    "lean-flow":       "19900.00",
-    "lean-leader":     "59900.00",
-    "six-sigma":       "59900.00",
-    "kaizen":          "59900.00",
-    "ladm":            "69900.00",
-    "standard-times":  "19900.00",
-    "corporate":       "1000000.00",
-}
+CODES_FILE = Path("codes.json")
 
 COURSE_NAMES = {
     "lean-intro":      "Введение в Lean",
@@ -73,62 +50,70 @@ COURSE_NAMES = {
     "corporate":       "Lean-трансформация предприятия",
 }
 
+COURSE_PRICES = {
+    "lean-intro":      "9900.00",
+    "5s":              "14900.00",
+    "vsm":             "19900.00",
+    "lean-flow":       "19900.00",
+    "lean-leader":     "59900.00",
+    "six-sigma":       "59900.00",
+    "kaizen":          "59900.00",
+    "ladm":            "69900.00",
+    "standard-times":  "19900.00",
+    "corporate":       "1000000.00",
+}
+
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 
+def load_codes() -> dict:
+    if CODES_FILE.exists():
+        try:
+            return json.loads(CODES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def save_codes(codes: dict):
+    CODES_FILE.write_text(json.dumps(codes, ensure_ascii=False, indent=2), encoding="utf-8")
+
 def generate_code(email: str, course_id: str) -> str:
-    """Генерирует уникальный код вида IVAN-5S-A7X2."""
     initials = email.split("@")[0][:4].upper()
     course_short = course_id.replace("-", "").upper()[:4]
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
     return f"{initials}-{course_short}-{suffix}"
 
+def grant_access(email: str, course_id: str, code: str):
+    codes = load_codes()
+    if course_id not in codes:
+        codes[course_id] = {}
+    codes[course_id][email.strip().lower()] = code.strip().upper()
+    save_codes(codes)
+    log.info(f"Access granted: {email} → {course_id} [{code}]")
 
-def get_credentials_file() -> tuple[str, str]:
-    """Получает текущий credentials.js из GitHub. Возвращает (content, sha)."""
-    log.info(f"get_credentials_file: token={'set' if GITHUB_TOKEN else 'MISSING'}")
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CREDENTIALS_PATH}"
-    resp = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
-    resp.raise_for_status()
-    data = resp.json()
-    content = base64.b64decode(data["content"]).decode("utf-8")
-    return content, data["sha"]
-
-
-def add_code_to_credentials(email: str, course_id: str, code: str):
-    """Добавляет email+код в credentials.js через GitHub API."""
-    content, sha = get_credentials_file()
-
-    marker = f"  '{course_id}': {{"
-    if marker not in content:
-        raise ValueError(f"Курс '{course_id}' не найден в credentials.js")
-
-    new_line = f"\n    '{email}': '{code}',"
-    content = content.replace(marker, marker + new_line, 1)
-
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CREDENTIALS_PATH}"
-    payload = {
-        "message": f"Access granted: {email} → {course_id}",
-        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
-        "sha": sha,
-    }
-    resp = requests.put(
-        url,
-        headers={"Authorization": f"token {GITHUB_TOKEN}"},
-        json=payload,
-    )
-    resp.raise_for_status()
-    log.info(f"credentials.js обновлён: {email} → {course_id}")
-
+def notify_admin(text: str):
+    """Отправляет уведомление администратору через Telegram."""
+    if not BOT_TOKEN_REF or not ADMIN_IDS_REF:
+        return
+    for admin_id in ADMIN_IDS_REF:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN_REF}/sendMessage",
+                json={"chat_id": admin_id, "text": text, "parse_mode": "HTML"},
+                timeout=5,
+            )
+        except Exception as e:
+            log.error(f"Telegram notify error: {e}")
 
 def send_email(to_email: str, course_id: str, code: str):
     """Отправляет письмо с кодом доступа покупателю."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        log.warning("SMTP не настроен — письмо не отправлено")
+        return
     course_name = COURSE_NAMES.get(course_id, course_id)
-
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Ваш доступ к курсу «{course_name}» — LeanPro"
     msg["From"]    = SMTP_USER
     msg["To"]      = to_email
-
     html = f"""
 <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e293b">
   <div style="background:#0f4c81;padding:24px 32px;border-radius:8px 8px 0 0">
@@ -137,7 +122,6 @@ def send_email(to_email: str, course_id: str, code: str):
   <div style="background:#f8fafc;padding:32px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
     <h2 style="margin-top:0">Доступ к курсу открыт!</h2>
     <p>Вы приобрели курс <strong>«{course_name}»</strong>.</p>
-    <p>Для входа перейдите на сайт и введите:</p>
     <ul style="line-height:2">
       <li><strong>Email:</strong> {to_email}</li>
       <li><strong>Код доступа:</strong>
@@ -149,152 +133,144 @@ def send_email(to_email: str, course_id: str, code: str):
        background:#0f4c81;color:#fff;padding:12px 28px;border-radius:6px;
        text-decoration:none;font-weight:bold">Перейти к курсу →</a>
     <p style="margin-top:32px;font-size:13px;color:#64748b">
-      Код доступа привязан к вашему email и не передаётся другим лицам.<br>
-      По вопросам: <a href="mailto:dmitry_bar@mail.ru">dmitry_bar@mail.ru</a>
+      Код привязан к вашему email.<br>
+      Вопросы: <a href="mailto:dmitry_bar@mail.ru">dmitry_bar@mail.ru</a>
     </p>
   </div>
-</div>
-"""
+</div>"""
     msg.attach(MIMEText(html, "html", "utf-8"))
-
     with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.sendmail(SMTP_USER, to_email, msg.as_string())
-
-    log.info(f"Email отправлен: {to_email} ({course_name})")
-
+    log.info(f"Email отправлен: {to_email}")
 
 # ─── ROUTES ──────────────────────────────────────────────────────────────────
 
+@app.after_request
+def add_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({
-        "status": "ok",
-        "vars": {
-            "GITHUB_TOKEN":    "set" if GITHUB_TOKEN else "MISSING",
-            "YOOKASSA_SECRET": "set" if YOOKASSA_SECRET else "MISSING",
-            "SMTP_USER":       SMTP_USER if SMTP_USER else "MISSING",
-        }
-    })
+    codes = load_codes()
+    total = sum(len(v) for v in codes.values())
+    return jsonify({"status": "ok", "total_codes": total,
+                    "smtp": "set" if SMTP_USER else "not set",
+                    "telegram": "set" if BOT_TOKEN_REF else "not set"})
 
-
-@app.route("/create-payment", methods=["POST"])
-def create_payment():
-    """Создаёт платёж в ЮКассе и возвращает URL для оплаты."""
+@app.route("/verify", methods=["POST", "OPTIONS"])
+def verify():
+    """Проверяет email+код для входа в курс."""
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
     body      = request.get_json(force=True)
     email     = body.get("email", "").strip().lower()
+    code      = body.get("code", "").strip().upper()
     course_id = body.get("course_id", "").strip()
 
-    if not email or not course_id:
-        return jsonify({"error": "email and course_id required"}), 400
-    if course_id not in COURSE_PRICES:
-        return jsonify({"error": "unknown course"}), 400
+    # Администраторский вход
+    if email == "dmitry_bar@mail.ru" and code == "LP2025ADMIN":
+        return jsonify({"ok": True, "admin": True,
+                        "courses": list(COURSE_NAMES.keys())})
 
-    amount      = COURSE_PRICES[course_id]
-    course_name = COURSE_NAMES.get(course_id, course_id)
+    if not email or not code or not course_id:
+        return jsonify({"ok": False, "error": "missing fields"}), 400
 
-    payment = Payment.create({
-        "amount": {"value": amount, "currency": "RUB"},
-        "confirmation": {
-            "type": "redirect",
-            "return_url": f"https://leanprorus.ru/thank-you.html?course={course_id}",
-        },
-        "capture": True,
-        "description": f"Курс «{course_name}»",
-        "receipt": {
-            "customer": {"email": email},
-            "items": [{
-                "description": course_name,
-                "quantity": "1",
-                "amount": {"value": amount, "currency": "RUB"},
-                "vat_code": 1,
-                "payment_mode": "full_payment",
-                "payment_subject": "service",
-            }],
-        },
-        "metadata": {"email": email, "course_id": course_id},
-    }, str(uuid.uuid4()))
-
-    return jsonify({"confirmation_url": payment.confirmation.confirmation_url})
-
-
-@app.route("/webhook/yookassa", methods=["POST"])
-def yookassa_webhook():
-    """Принимает уведомление об успешной оплате от ЮКассы."""
-    try:
-        data = request.get_json(force=True)
-        log.info(f"Webhook received: {json.dumps(data)[:200]}")
-
-        event = data.get("event", "")
-        if event != "payment.succeeded":
-            return jsonify({"status": "ignored"}), 200
-
-        payment = data.get("object", {})
-        status  = payment.get("status", "")
-        if status != "succeeded":
-            return jsonify({"status": "ignored"}), 200
-
-        # Email покупателя
-        email = (
-            payment.get("receipt", {}).get("customer", {}).get("email")
-            or payment.get("metadata", {}).get("email")
-        )
-        if not email:
-            log.error("Email покупателя не найден в webhook")
-            return jsonify({"error": "no email"}), 400
-
-        # ID курса из метаданных платежа
-        course_id = payment.get("metadata", {}).get("course_id", "")
-        if not course_id:
-            log.error("course_id не найден в metadata платежа")
-            return jsonify({"error": "no course_id"}), 400
-
-        # Генерируем код и сохраняем
-        code = generate_code(email, course_id)
-        add_code_to_credentials(email, course_id, code)
-        send_email(email, course_id, code)
-
-        log.info(f"✅ Доступ выдан: {email} → {course_id} [{code}]")
-        return jsonify({"status": "ok"}), 200
-
-    except Exception as e:
-        log.exception(f"Ошибка обработки webhook: {e}")
-        return jsonify({"error": str(e)}), 500
-
+    codes = load_codes()
+    expected = codes.get(course_id, {}).get(email)
+    if expected and expected == code:
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "invalid credentials"}), 401
 
 @app.route("/grant", methods=["POST"])
 def manual_grant():
-    """Ручная выдача доступа (для тестов и ручных заказов)."""
+    """Ручная выдача доступа."""
     auth = request.headers.get("X-Admin-Token", "").strip()
-    if auth != ADMIN_TOKEN.strip():
+    if auth != ADMIN_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
-
-    body = request.get_json(force=True)
+    body      = request.get_json(force=True)
     email     = body.get("email", "").strip().lower()
     course_id = body.get("course_id", "").strip()
-
     if not email or not course_id:
         return jsonify({"error": "email and course_id required"}), 400
-
     code = generate_code(email, course_id)
-    log.info(f"Grant: email={email} course={course_id} code={code}")
-
-    try:
-        add_code_to_credentials(email, course_id, code)
-        log.info("credentials.js updated OK")
-    except Exception as e:
-        log.error(f"credentials update failed: {e}")
-        return jsonify({"error": f"github error: {str(e)}"}), 500
-
+    grant_access(email, course_id, code)
     try:
         send_email(email, course_id, code)
-        log.info("email sent OK")
     except Exception as e:
-        log.error(f"email send failed: {e}")
-        return jsonify({"error": f"email error: {str(e)}"}), 500
+        log.error(f"Email error: {e}")
+    notify_admin(
+        f"✅ <b>Доступ выдан вручную</b>\n"
+        f"📧 {email}\n📚 {COURSE_NAMES.get(course_id, course_id)}\n🔑 <code>{code}</code>"
+    )
+    return jsonify({"status": "ok", "code": code})
 
-    return jsonify({"status": "ok", "code": code}), 200
+@app.route("/webhook/yookassa", methods=["POST"])
+def yookassa_webhook():
+    """Webhook от ЮКассы после успешной оплаты."""
+    try:
+        data    = request.get_json(force=True)
+        event   = data.get("event", "")
+        payment = data.get("object", {})
+        if event != "payment.succeeded" or payment.get("status") != "succeeded":
+            return jsonify({"status": "ignored"}), 200
+        email = (payment.get("receipt", {}).get("customer", {}).get("email")
+                 or payment.get("metadata", {}).get("email"))
+        course_id = payment.get("metadata", {}).get("course_id", "")
+        if not email or not course_id:
+            return jsonify({"error": "missing email or course_id"}), 400
+        code = generate_code(email, course_id)
+        grant_access(email, course_id, code)
+        try:
+            send_email(email, course_id, code)
+        except Exception as e:
+            log.error(f"Email error: {e}")
+        notify_admin(
+            f"🎉 <b>Новая оплата!</b>\n"
+            f"📧 {email}\n📚 {COURSE_NAMES.get(course_id, course_id)}\n🔑 <code>{code}</code>"
+        )
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        log.exception(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
 
+@app.route("/create-payment", methods=["POST"])
+def create_payment():
+    """Создаёт платёж в ЮКассе."""
+    try:
+        from yookassa import Configuration, Payment
+        import uuid
+        if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET:
+            return jsonify({"error": "YooKassa not configured"}), 500
+        Configuration.account_id = YOOKASSA_SHOP_ID
+        Configuration.secret_key  = YOOKASSA_SECRET
+        body      = request.get_json(force=True)
+        email     = body.get("email", "").strip().lower()
+        course_id = body.get("course_id", "").strip()
+        if not email or course_id not in COURSE_PRICES:
+            return jsonify({"error": "invalid request"}), 400
+        amount      = COURSE_PRICES[course_id]
+        course_name = COURSE_NAMES.get(course_id, course_id)
+        payment = Payment.create({
+            "amount": {"value": amount, "currency": "RUB"},
+            "confirmation": {"type": "redirect",
+                             "return_url": f"https://leanprorus.ru/thank-you.html?course={course_id}"},
+            "capture": True,
+            "description": f"Курс «{course_name}»",
+            "receipt": {"customer": {"email": email},
+                        "items": [{"description": course_name, "quantity": "1",
+                                   "amount": {"value": amount, "currency": "RUB"},
+                                   "vat_code": 1, "payment_mode": "full_payment",
+                                   "payment_subject": "service"}]},
+            "metadata": {"email": email, "course_id": course_id},
+        }, str(uuid.uuid4()))
+        return jsonify({"confirmation_url": payment.confirmation.confirmation_url})
+    except Exception as e:
+        log.error(f"create-payment error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

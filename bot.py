@@ -525,11 +525,12 @@ def main():
 
     # Запускаем сервер оплаты в отдельном потоке
     import payment_server
-    payment_server.GITHUB_TOKEN   = PAY_GH_TOKEN
-    payment_server.YOOKASSA_SECRET = PAY_YK_SECRET
+    payment_server.YOOKASSA_SECRET  = PAY_YK_SECRET
     payment_server.YOOKASSA_SHOP_ID = PAY_YK_SHOP_ID
-    payment_server.SMTP_USER      = PAY_SMTP_USER
-    payment_server.SMTP_PASSWORD  = PAY_SMTP_PASS
+    payment_server.SMTP_USER        = PAY_SMTP_USER
+    payment_server.SMTP_PASSWORD    = PAY_SMTP_PASS
+    payment_server.BOT_TOKEN_REF    = BOT_TOKEN
+    payment_server.ADMIN_IDS_REF    = ADMIN_IDS
     from payment_server import app as flask_app
     port = int(os.environ.get("PORT", 8080))
     t = threading.Thread(
