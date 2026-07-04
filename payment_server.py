@@ -168,10 +168,10 @@ def send_email(to_email: str, course_id: str, code: str):
 
 @app.route("/health", methods=["GET"])
 def health():
-    keys = ["GH_ACCESS_TOKEN", "YOOKASSA_SECRET", "YOOKASSA_SHOP_ID", "SMTP_USER", "GITHUB_REPO"]
+    keys = ["BOT_TOKEN", "CHANNEL_ID", "GH_ACCESS_TOKEN", "YOOKASSA_SECRET", "SMTP_USER"]
     return jsonify({
         "status": "ok",
-        "vars": {k: ("set:"+os.environ[k][:4] if os.environ.get(k) else "MISSING") for k in keys}
+        "vars": {k: ("set:"+os.environ[k][:6] if os.environ.get(k) else "MISSING") for k in keys}
     })
 
 
