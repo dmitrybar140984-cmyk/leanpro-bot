@@ -138,6 +138,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/list — список запланированных постов\n"
         "/cancel &lt;id&gt; — отменить пост\n"
         "/stats — статистика канала\n\n"
+        "<b>Коды доступа:</b>\n"
+        "/codes — список всех выданных кодов\n"
+        "/restore &lt;json&gt; — восстановить коды вручную\n\n"
         "💡 Посты поддерживают HTML: &lt;b&gt;, &lt;i&gt;, &lt;a href='...'&gt;",
         parse_mode="HTML"
     )
@@ -457,10 +460,101 @@ async def cmd_aipost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+# ─── TELEGRAM BACKUP / RESTORE ───────────────────────────────────────────────
+
+BACKUP_MARKER = "🔐LEANPRO_BACKUP\n"
+
+async def _restore_codes_if_needed(bot):
+    """On startup, restore codes.json from Telegram pinned backup if the file is empty."""
+    import payment_server
+    codes = payment_server.load_codes()
+    total = sum(len(v) for v in codes.values())
+    if total > 0:
+        log.info(f"codes.json OK — {total} entries, no restore needed")
+        return
+    if not ADMIN_IDS:
+        return
+    admin_id = ADMIN_IDS[0]
+    log.info("codes.json is empty — attempting Telegram backup restore...")
+    try:
+        chat = await bot.get_chat(admin_id)
+        pinned = getattr(chat, "pinned_message", None)
+        if not pinned or not getattr(pinned, "text", None):
+            log.warning("No pinned backup message found in admin chat")
+            await bot.send_message(
+                admin_id,
+                "⚠️ <b>Коды доступа сброшены после редеплоя!</b>\n"
+                "Автовосстановление не удалось — нет закреплённой резервной копии.\n"
+                "Используйте /restore &lt;json&gt; для ручного восстановления.",
+                parse_mode="HTML",
+            )
+            return
+        text = pinned.text
+        if not text.startswith(BACKUP_MARKER):
+            log.warning("Pinned message is not a LeanPro backup")
+            return
+        restored = json.loads(text[len(BACKUP_MARKER):])
+        payment_server._write_codes_file(restored)
+        total = sum(len(v) for v in restored.values())
+        log.info(f"✅ Restored {total} access codes from Telegram backup!")
+        await bot.send_message(
+            admin_id,
+            f"✅ <b>Коды автоматически восстановлены после редеплоя!</b>\n"
+            f"📊 Записей: <b>{total}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        log.error(f"Telegram restore error: {e}")
+
+@admin_only
+async def cmd_codes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Список всех кодов доступа: /codes"""
+    import payment_server
+    codes = payment_server.load_codes()
+    if not codes:
+        await update.message.reply_text("📭 Кодов доступа нет.")
+        return
+    total = sum(len(v) for v in codes.values())
+    lines = [f"🔑 <b>Коды доступа ({total}):</b>\n"]
+    for course_id, emails in codes.items():
+        cname = payment_server.COURSE_NAMES.get(course_id, course_id)
+        lines.append(f"\n📚 <b>{cname}:</b>")
+        for email, code in emails.items():
+            lines.append(f"  {email} → <code>{code}</code>")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+@admin_only
+async def cmd_restore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Восстановить коды из JSON: /restore <json>"""
+    import payment_server
+    if not ctx.args:
+        await update.message.reply_text(
+            "Использование: /restore &lt;json&gt;\n\n"
+            "Пример: <code>/restore {\"lean-intro\":{\"user@mail.ru\":\"CODE-123\"}}</code>\n\n"
+            "Текущие коды: /codes",
+            parse_mode="HTML",
+        )
+        return
+    try:
+        json_str = " ".join(ctx.args)
+        restored = json.loads(json_str)
+        payment_server._write_codes_file(restored)
+        total = sum(len(v) for v in restored.values())
+        await update.message.reply_text(
+            f"✅ Восстановлено <b>{total}</b> кодов доступа.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка разбора JSON: {e}")
+
 # ─── STARTUP: restore daily jobs ─────────────────────────────────────────────
 
 async def post_init(app: Application):
     """Восстанавливаем ежедневные задания после перезапуска."""
+
+    # Автовосстановление кодов из Telegram-бэкапа
+    await _restore_codes_if_needed(app.bot)
+
     schedule = load_schedule()
     restored = 0
     for s in schedule:
@@ -511,8 +605,10 @@ def main():
     app.add_handler(CommandHandler("list",   cmd_list))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("stats",  cmd_stats))
-    app.add_handler(CommandHandler("unban",  cmd_unban))
-    app.add_handler(CommandHandler("aipost", cmd_aipost))
+    app.add_handler(CommandHandler("unban",   cmd_unban))
+    app.add_handler(CommandHandler("aipost",  cmd_aipost))
+    app.add_handler(CommandHandler("codes",   cmd_codes))
+    app.add_handler(CommandHandler("restore", cmd_restore))
 
     # Welcome new members
     app.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))

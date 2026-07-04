@@ -73,8 +73,46 @@ def load_codes() -> dict:
             return {}
     return {}
 
-def save_codes(codes: dict):
+BACKUP_MARKER = "🔐LEANPRO_BACKUP\n"
+
+def _write_codes_file(codes: dict):
+    """Write codes to local file only — no Telegram backup."""
     CODES_FILE.write_text(json.dumps(codes, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def save_codes(codes: dict):
+    """Write codes to file and send Telegram backup."""
+    _write_codes_file(codes)
+    backup_codes_to_telegram(codes)
+
+def backup_codes_to_telegram(codes: dict):
+    """Pin a full-JSON backup of codes in admin's private Telegram chat."""
+    if not BOT_TOKEN_REF or not ADMIN_IDS_REF:
+        return
+    admin_id = ADMIN_IDS_REF[0]
+    text = BACKUP_MARKER + json.dumps(codes, ensure_ascii=False)
+    if len(text) > 4000:
+        log.warning("Backup JSON too large for Telegram message — skipping backup")
+        return
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN_REF}/sendMessage",
+            json={"chat_id": admin_id, "text": text},
+            timeout=10,
+        )
+        data = r.json()
+        if data.get("ok"):
+            msg_id = data["result"]["message_id"]
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN_REF}/pinChatMessage",
+                json={"chat_id": admin_id, "message_id": msg_id, "disable_notification": True},
+                timeout=10,
+            )
+            total = sum(len(v) for v in codes.values())
+            log.info(f"Telegram backup saved (msg_id={msg_id}, entries={total})")
+        else:
+            log.warning(f"Telegram backup sendMessage failed: {data}")
+    except Exception as e:
+        log.error(f"Telegram backup error: {e}")
 
 def generate_code(email: str, course_id: str) -> str:
     initials = email.split("@")[0][:4].upper()
