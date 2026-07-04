@@ -31,7 +31,7 @@ app = Flask(__name__)
 YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET  = os.environ.get("YOOKASSA_SECRET", "")
 ADMIN_TOKEN      = os.environ.get("ADMIN_TOKEN", "leanpro-admin-2025")
-GITHUB_TOKEN     = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_TOKEN     = os.environ.get("GH_ACCESS_TOKEN", "")
 GITHUB_REPO      = os.environ.get("GITHUB_REPO", "dmitrybar140984-cmyk/lean-site")
 SMTP_USER        = os.environ.get("SMTP_USER", "")        # ваш @yandex.ru
 SMTP_PASSWORD    = os.environ.get("SMTP_PASSWORD", "")    # пароль приложения
@@ -40,7 +40,7 @@ SMTP_PORT        = int(os.environ.get("SMTP_PORT", "465"))
 
 CREDENTIALS_PATH = "credentials.js"
 
-log.info(f"GITHUB_TOKEN present: {bool(GITHUB_TOKEN)}, starts: {GITHUB_TOKEN[:6] if GITHUB_TOKEN else 'none'}")
+log.info(f"GH_ACCESS_TOKEN present: {bool(GITHUB_TOKEN)}, starts: {GITHUB_TOKEN[:6] if GITHUB_TOKEN else 'none'}")
 log.info(f"GITHUB_REPO: {GITHUB_REPO}")
 
 if YOOKASSA_SHOP_ID and YOOKASSA_SECRET:
