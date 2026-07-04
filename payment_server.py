@@ -31,7 +31,6 @@ app = Flask(__name__)
 YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET  = os.environ.get("YOOKASSA_SECRET", "")
 ADMIN_TOKEN      = os.environ.get("ADMIN_TOKEN", "leanpro-admin-2025")
-GITHUB_TOKEN     = os.environ.get("GH_ACCESS_TOKEN", "")
 GITHUB_REPO      = os.environ.get("GITHUB_REPO", "dmitrybar140984-cmyk/lean-site")
 SMTP_USER        = os.environ.get("SMTP_USER", "")        # ваш @yandex.ru
 SMTP_PASSWORD    = os.environ.get("SMTP_PASSWORD", "")    # пароль приложения
@@ -40,7 +39,6 @@ SMTP_PORT        = int(os.environ.get("SMTP_PORT", "465"))
 
 CREDENTIALS_PATH = "credentials.js"
 
-log.info(f"GH_ACCESS_TOKEN present: {bool(GITHUB_TOKEN)}, starts: {GITHUB_TOKEN[:6] if GITHUB_TOKEN else 'none'}")
 log.info(f"GITHUB_REPO: {GITHUB_REPO}")
 
 if YOOKASSA_SHOP_ID and YOOKASSA_SECRET:
@@ -85,8 +83,10 @@ def generate_code(email: str, course_id: str) -> str:
 
 def get_credentials_file() -> tuple[str, str]:
     """Получает текущий credentials.js из GitHub. Возвращает (content, sha)."""
+    token = os.environ.get("GH_ACCESS_TOKEN", "").strip()
+    log.info(f"get_credentials_file: token={'set' if token else 'MISSING'}")
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CREDENTIALS_PATH}"
-    resp = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
+    resp = requests.get(url, headers={"Authorization": f"token {token}"})
     resp.raise_for_status()
     data = resp.json()
     content = base64.b64decode(data["content"]).decode("utf-8")
@@ -95,9 +95,9 @@ def get_credentials_file() -> tuple[str, str]:
 
 def add_code_to_credentials(email: str, course_id: str, code: str):
     """Добавляет email+код в credentials.js через GitHub API."""
+    token = os.environ.get("GH_ACCESS_TOKEN", "").strip()
     content, sha = get_credentials_file()
 
-    # Ищем нужный курс и вставляем строку после открывающей скобки
     marker = f"  '{course_id}': {{"
     if marker not in content:
         raise ValueError(f"Курс '{course_id}' не найден в credentials.js")
@@ -113,7 +113,7 @@ def add_code_to_credentials(email: str, course_id: str, code: str):
     }
     resp = requests.put(
         url,
-        headers={"Authorization": f"token {GITHUB_TOKEN}"},
+        headers={"Authorization": f"token {token}"},
         json=payload,
     )
     resp.raise_for_status()
