@@ -31,31 +31,36 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── проверка переменных окружения ──────────────────────────────────────────
-def _require(name: str) -> str:
-    val = os.environ.get(name, "").strip()
-    if not val:
-        log.error(f"❌ Переменная {name} не задана в Railway Variables!")
-        raise SystemExit(1)
-    log.info(f"✅ {name} загружена")
-    return val
+# Fallback values from cfg.py when Railway Variables don't load
+try:
+    import cfg as _cfg
+except ImportError:
+    _cfg = None
 
-BOT_TOKEN        = _require("BOT_TOKEN")
-CHANNEL_ID       = int(_require("CHANNEL_ID"))
-GROUP_ID         = int(os.environ.get("GROUP_ID", "0").strip() or "0")
-ADMIN_IDS        = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-GROQ_KEY         = os.environ.get("GROQ_API_KEY", "").strip()
-AUTO_POST_TIME   = os.environ.get("AUTO_POST_TIME", "09:00").strip()
+def _env(name: str, default: str = "") -> str:
+    return (os.environ.get(name, "") or getattr(_cfg, name, default) or default).strip()
 
-# Переменные для сервера оплаты — читаем здесь, передаём в payment_server
-PAY_GH_TOKEN     = os.environ.get("GH_ACCESS_TOKEN", "").strip()
-PAY_YK_SECRET    = os.environ.get("YOOKASSA_SECRET", "").strip()
-PAY_YK_SHOP_ID   = os.environ.get("YOOKASSA_SHOP_ID", "").strip()
-PAY_SMTP_USER    = os.environ.get("SMTP_USER", "").strip()
-PAY_SMTP_PASS    = os.environ.get("SMTP_PASSWORD", "").strip()
-log.info(f"Payment vars: GH={'set' if PAY_GH_TOKEN else 'MISSING'} YK={'set' if PAY_YK_SECRET else 'MISSING'} SMTP={'set' if PAY_SMTP_USER else 'MISSING'}")
+BOT_TOKEN        = _env("BOT_TOKEN")
+CHANNEL_ID       = int(_env("CHANNEL_ID", "0"))
+GROUP_ID         = int(_env("GROUP_ID", "0"))
+ADMIN_IDS        = [int(x) for x in _env("ADMIN_IDS").split(",") if x.strip()]
+GROQ_KEY         = _env("GROQ_API_KEY")
+AUTO_POST_TIME   = _env("AUTO_POST_TIME", "09:00")
 
+if not BOT_TOKEN:
+    log.error("❌ BOT_TOKEN не задан ни в env, ни в cfg.py!")
+    raise SystemExit(1)
+
+log.info(f"✅ BOT_TOKEN загружен ({BOT_TOKEN[:10]}...)")
 log.info(f"CHANNEL_ID={CHANNEL_ID} | GROUP_ID={GROUP_ID} | ADMIN_IDS={ADMIN_IDS}")
+
+# Переменные для сервера оплаты
+PAY_YK_SECRET    = _env("YOOKASSA_SECRET")
+PAY_YK_SHOP_ID   = _env("YOOKASSA_SHOP_ID")
+PAY_SMTP_USER    = _env("SMTP_USER")
+PAY_SMTP_PASS    = _env("SMTP_PASSWORD")
+log.info(f"Payment vars: YK={'set' if PAY_YK_SECRET else 'MISSING'} SMTP={'set' if PAY_SMTP_USER else 'MISSING'}")
+
 log.info(f"AI auto-post: {'включён' if GROQ_KEY else 'выключен (нет GROQ_API_KEY)'} в {AUTO_POST_TIME}")
 
 SCHEDULE_FILE = Path("schedule.json")
