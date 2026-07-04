@@ -38,7 +38,10 @@ SMTP_PASSWORD    = os.environ.get("SMTP_PASSWORD", "")    # пароль при�
 SMTP_HOST        = os.environ.get("SMTP_HOST", "smtp.yandex.ru")
 SMTP_PORT        = int(os.environ.get("SMTP_PORT", "465"))
 
-CREDENTIALS_PATH = "lean-site/credentials.js"
+CREDENTIALS_PATH = "credentials.js"
+
+log.info(f"GITHUB_TOKEN present: {bool(GITHUB_TOKEN)}, starts: {GITHUB_TOKEN[:6] if GITHUB_TOKEN else 'none'}")
+log.info(f"GITHUB_REPO: {GITHUB_REPO}")
 
 if YOOKASSA_SHOP_ID and YOOKASSA_SECRET:
     Configuration.account_id = YOOKASSA_SHOP_ID
