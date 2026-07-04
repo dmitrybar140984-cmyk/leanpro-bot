@@ -28,14 +28,16 @@ app = Flask(__name__)
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
-YOOKASSA_SECRET  = os.environ.get("YOOKASSA_SECRET", "")
-ADMIN_TOKEN      = os.environ.get("ADMIN_TOKEN", "leanpro-admin-2025")
-GITHUB_REPO      = os.environ.get("GITHUB_REPO", "dmitrybar140984-cmyk/lean-site")
-SMTP_USER        = os.environ.get("SMTP_USER", "")        # ваш @yandex.ru
-SMTP_PASSWORD    = os.environ.get("SMTP_PASSWORD", "")    # пароль приложения
-SMTP_HOST        = os.environ.get("SMTP_HOST", "smtp.yandex.ru")
-SMTP_PORT        = int(os.environ.get("SMTP_PORT", "465"))
+# Значения устанавливаются из bot.py после импорта
+YOOKASSA_SHOP_ID = ""
+YOOKASSA_SECRET  = ""
+GITHUB_TOKEN     = ""
+GITHUB_REPO      = "dmitrybar140984-cmyk/lean-site"
+SMTP_USER        = ""
+SMTP_PASSWORD    = ""
+SMTP_HOST        = "smtp.yandex.ru"
+SMTP_PORT        = 465
+ADMIN_TOKEN      = "leanpro-admin-2025"
 
 CREDENTIALS_PATH = "credentials.js"
 
@@ -83,10 +85,9 @@ def generate_code(email: str, course_id: str) -> str:
 
 def get_credentials_file() -> tuple[str, str]:
     """Получает текущий credentials.js из GitHub. Возвращает (content, sha)."""
-    token = os.environ.get("GH_ACCESS_TOKEN", "").strip()
-    log.info(f"get_credentials_file: token={'set' if token else 'MISSING'}")
+    log.info(f"get_credentials_file: token={'set' if GITHUB_TOKEN else 'MISSING'}")
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CREDENTIALS_PATH}"
-    resp = requests.get(url, headers={"Authorization": f"token {token}"})
+    resp = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
     resp.raise_for_status()
     data = resp.json()
     content = base64.b64decode(data["content"]).decode("utf-8")
@@ -95,7 +96,6 @@ def get_credentials_file() -> tuple[str, str]:
 
 def add_code_to_credentials(email: str, course_id: str, code: str):
     """Добавляет email+код в credentials.js через GitHub API."""
-    token = os.environ.get("GH_ACCESS_TOKEN", "").strip()
     content, sha = get_credentials_file()
 
     marker = f"  '{course_id}': {{"
@@ -113,7 +113,7 @@ def add_code_to_credentials(email: str, course_id: str, code: str):
     }
     resp = requests.put(
         url,
-        headers={"Authorization": f"token {token}"},
+        headers={"Authorization": f"token {GITHUB_TOKEN}"},
         json=payload,
     )
     resp.raise_for_status()
@@ -168,10 +168,13 @@ def send_email(to_email: str, course_id: str, code: str):
 
 @app.route("/health", methods=["GET"])
 def health():
-    keys = ["BOT_TOKEN", "CHANNEL_ID", "GH_ACCESS_TOKEN", "YOOKASSA_SECRET", "SMTP_USER"]
     return jsonify({
         "status": "ok",
-        "vars": {k: ("set:"+os.environ[k][:6] if os.environ.get(k) else "MISSING") for k in keys}
+        "vars": {
+            "GITHUB_TOKEN":    "set" if GITHUB_TOKEN else "MISSING",
+            "YOOKASSA_SECRET": "set" if YOOKASSA_SECRET else "MISSING",
+            "SMTP_USER":       SMTP_USER if SMTP_USER else "MISSING",
+        }
     })
 
 

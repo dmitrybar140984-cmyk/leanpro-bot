@@ -44,8 +44,16 @@ BOT_TOKEN        = _require("BOT_TOKEN")
 CHANNEL_ID       = int(_require("CHANNEL_ID"))
 GROUP_ID         = int(os.environ.get("GROUP_ID", "0").strip() or "0")
 ADMIN_IDS        = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
-AUTO_POST_TIME = os.environ.get("AUTO_POST_TIME", "09:00").strip()
+GROQ_KEY         = os.environ.get("GROQ_API_KEY", "").strip()
+AUTO_POST_TIME   = os.environ.get("AUTO_POST_TIME", "09:00").strip()
+
+# Переменные для сервера оплаты — читаем здесь, передаём в payment_server
+PAY_GH_TOKEN     = os.environ.get("GH_ACCESS_TOKEN", "").strip()
+PAY_YK_SECRET    = os.environ.get("YOOKASSA_SECRET", "").strip()
+PAY_YK_SHOP_ID   = os.environ.get("YOOKASSA_SHOP_ID", "").strip()
+PAY_SMTP_USER    = os.environ.get("SMTP_USER", "").strip()
+PAY_SMTP_PASS    = os.environ.get("SMTP_PASSWORD", "").strip()
+log.info(f"Payment vars: GH={'set' if PAY_GH_TOKEN else 'MISSING'} YK={'set' if PAY_YK_SECRET else 'MISSING'} SMTP={'set' if PAY_SMTP_USER else 'MISSING'}")
 
 log.info(f"CHANNEL_ID={CHANNEL_ID} | GROUP_ID={GROUP_ID} | ADMIN_IDS={ADMIN_IDS}")
 log.info(f"AI auto-post: {'включён' if GROQ_KEY else 'выключен (нет GROQ_API_KEY)'} в {AUTO_POST_TIME}")
@@ -516,6 +524,12 @@ def main():
         )
 
     # Запускаем сервер оплаты в отдельном потоке
+    import payment_server
+    payment_server.GITHUB_TOKEN   = PAY_GH_TOKEN
+    payment_server.YOOKASSA_SECRET = PAY_YK_SECRET
+    payment_server.YOOKASSA_SHOP_ID = PAY_YK_SHOP_ID
+    payment_server.SMTP_USER      = PAY_SMTP_USER
+    payment_server.SMTP_PASSWORD  = PAY_SMTP_PASS
     from payment_server import app as flask_app
     port = int(os.environ.get("PORT", 8080))
     t = threading.Thread(
