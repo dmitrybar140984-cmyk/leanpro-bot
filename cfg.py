@@ -18,7 +18,7 @@ _y1 = "live_rgxZshmuAzc0xAkk6cU"
 _y2 = "FRaD34dVzedVT1CkzL_vCgGI"
 YOOKASSA_SECRET = _y1 + _y2
 
-SMTP_USER     = "barannikoff.dmit" + "@ya.ru"
-SMTP_PASSWORD = "0e63575b" + "8f57d1aa" + "dbdeb8de9e49c2c4"
+# Resend API key — заполни после регистрации на resend.com
+RESEND_API_KEY = ""
 
 AUTO_POST_TIME = "09:00"

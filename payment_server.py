@@ -4,6 +4,8 @@ LeanPro Payment Server
 - /grant       — ручная выдача доступа (admin)
 - /webhook/yookassa — webhook от ЮКассы после оплаты
 - /health      — статус сервера
+- /contact     — заявка с формы обратной связи
+- /test-email  — тест отправки email (отладка)
 """
 
 import os
@@ -11,13 +13,11 @@ import json
 import logging
 import random
 import string
-import smtplib
-from pathlib import Path
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
 import threading
+from pathlib import Path
+
 import requests
+import resend
 from flask import Flask, request, jsonify
 
 log = logging.getLogger(__name__)
@@ -26,10 +26,9 @@ app = Flask(__name__)
 # ─── CONFIG (значения передаются из bot.py) ───────────────────────────────────
 YOOKASSA_SHOP_ID = ""
 YOOKASSA_SECRET  = ""
-SMTP_USER        = ""
-SMTP_PASSWORD    = ""
-SMTP_HOST        = "smtp.yandex.ru"
-SMTP_PORT        = 587
+RESEND_API_KEY   = ""
+RESEND_FROM      = "LeanPro <noreply@leanprorus.ru>"
+ADMIN_EMAIL      = "dmitry_bar@mail.ru"
 ADMIN_TOKEN      = "leanpro-admin-2025"
 
 # BOT_TOKEN и ADMIN_IDS передаются из bot.py для Telegram-уведомлений
@@ -77,16 +76,13 @@ def load_codes() -> dict:
 BACKUP_MARKER = "🔐LEANPRO_BACKUP\n"
 
 def _write_codes_file(codes: dict):
-    """Write codes to local file only — no Telegram backup."""
     CODES_FILE.write_text(json.dumps(codes, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def save_codes(codes: dict):
-    """Write codes to file and send Telegram backup."""
     _write_codes_file(codes)
     backup_codes_to_telegram(codes)
 
 def backup_codes_to_telegram(codes: dict):
-    """Pin a full-JSON backup of codes in admin's private Telegram chat."""
     if not BOT_TOKEN_REF or not ADMIN_IDS_REF:
         return
     admin_id = ADMIN_IDS_REF[0]
@@ -130,7 +126,6 @@ def grant_access(email: str, course_id: str, code: str):
     log.info(f"Access granted: {email} → {course_id} [{code}]")
 
 def notify_admin(text: str):
-    """Отправляет уведомление администратору через Telegram."""
     if not BOT_TOKEN_REF or not ADMIN_IDS_REF:
         return
     for admin_id in ADMIN_IDS_REF:
@@ -143,17 +138,24 @@ def notify_admin(text: str):
         except Exception as e:
             log.error(f"Telegram notify error: {e}")
 
+def _resend_send(to: str, subject: str, html: str):
+    """Отправляет email через Resend API (HTTPS, порт 443 — работает на Railway)."""
+    if not RESEND_API_KEY:
+        log.warning("RESEND_API_KEY не задан — письмо не отправлено")
+        return
+    resend.api_key = RESEND_API_KEY
+    resend.Emails.send({
+        "from": RESEND_FROM,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    })
+    log.info(f"Email отправлен через Resend: {to}")
+
 def send_contact_email(name: str, phone: str, email: str, course: str, message: str):
     """Отправляет заявку с сайта на email администратора."""
-    if not SMTP_USER or not SMTP_PASSWORD:
-        log.warning("SMTP не настроен — уведомление не отправлено")
-        return
-    admin_email = "dmitry_bar@mail.ru"
-    msg = MIMEMultipart("alternative")
     subject_course = f" — {course}" if course else ""
-    msg["Subject"] = f"Новая заявка с сайта: {name}{subject_course}"
-    msg["From"]    = SMTP_USER
-    msg["To"]      = admin_email
+    subject = f"Новая заявка с сайта: {name}{subject_course}"
     message_block = (
         f"<div style='margin-top:16px;padding:16px;background:#fff;"
         f"border-radius:6px;border:1px solid #e2e8f0'>{message}</div>"
@@ -178,27 +180,16 @@ def send_contact_email(name: str, phone: str, email: str, course: str, message: 
     {message_block}
   </div>
 </div>"""
-    msg.attach(MIMEText(html, "html", "utf-8"))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_USER, admin_email, msg.as_string())
-    log.info(f"Contact email: {name} ({email})")
+    _resend_send(ADMIN_EMAIL, subject, html)
 
 def send_email(to_email: str, course_id: str, code: str):
     """Отправляет письмо с кодом доступа покупателю."""
-    if not SMTP_USER or not SMTP_PASSWORD:
-        log.warning("SMTP не настроен — письмо не отправлено")
-        return
     course_name = COURSE_NAMES.get(course_id, course_id)
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Ваш доступ к курсу «{course_name}» — LeanPro"
-    msg["From"]    = SMTP_USER
-    msg["To"]      = to_email
+    subject = f"Ваш доступ к курсу «{course_name}» — LeanPro"
     html = f"""
 <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e293b">
   <div style="background:#0f4c81;padding:24px 32px;border-radius:8px 8px 0 0">
-    <h1 style="color:#fff;margin:0;font-size:22px">⬡ LeanPro</h1>
+    <h1 style="color:#fff;margin:0;font-size:22px">&#x2B21; LeanPro</h1>
   </div>
   <div style="background:#f8fafc;padding:32px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
     <h2 style="margin-top:0">Доступ к курсу открыт!</h2>
@@ -219,12 +210,7 @@ def send_email(to_email: str, course_id: str, code: str):
     </p>
   </div>
 </div>"""
-    msg.attach(MIMEText(html, "html", "utf-8"))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_USER, to_email, msg.as_string())
-    log.info(f"Email отправлен: {to_email}")
+    _resend_send(to_email, subject, html)
 
 # ─── ROUTES ──────────────────────────────────────────────────────────────────
 
@@ -240,12 +226,11 @@ def health():
     codes = load_codes()
     total = sum(len(v) for v in codes.values())
     return jsonify({"status": "ok", "total_codes": total,
-                    "smtp": "set" if SMTP_USER else "not set",
+                    "resend": "set" if RESEND_API_KEY else "not set",
                     "telegram": "set" if BOT_TOKEN_REF else "not set"})
 
 @app.route("/verify", methods=["POST", "OPTIONS"])
 def verify():
-    """Проверяет email+код для входа в курс."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
     body      = request.get_json(force=True)
@@ -253,7 +238,6 @@ def verify():
     code      = body.get("code", "").strip().upper()
     course_id = body.get("course_id", "").strip()
 
-    # Администраторский вход
     if email == "dmitry_bar@mail.ru" and code == "LP2025ADMIN":
         return jsonify({"ok": True, "admin": True,
                         "courses": list(COURSE_NAMES.keys())})
@@ -269,7 +253,6 @@ def verify():
 
 @app.route("/grant", methods=["POST"])
 def manual_grant():
-    """Ручная выдача доступа."""
     auth = request.headers.get("X-Admin-Token", "").strip()
     if auth != ADMIN_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
@@ -292,7 +275,6 @@ def manual_grant():
 
 @app.route("/webhook/yookassa", methods=["POST"])
 def yookassa_webhook():
-    """Webhook от ЮКассы после успешной оплаты."""
     try:
         data    = request.get_json(force=True)
         event   = data.get("event", "")
@@ -319,27 +301,20 @@ def yookassa_webhook():
         log.exception(f"Webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/test-smtp")
-def test_smtp():
-    """Тест SMTP — только для отладки, вызвать вручную."""
-    if not SMTP_USER or not SMTP_PASSWORD:
-        return jsonify({"error": "SMTP not configured"}), 500
+@app.route("/test-email")
+def test_email():
+    """Тест Resend — открыть в браузере для проверки."""
+    if not RESEND_API_KEY:
+        return jsonify({"error": "RESEND_API_KEY not set"}), 500
     try:
-        msg = MIMEText("Тест SMTP с Railway. Если письмо дошло — всё работает.", "plain", "utf-8")
-        msg["Subject"] = "LeanPro SMTP test"
-        msg["From"]    = SMTP_USER
-        msg["To"]      = "dmitry_bar@mail.ru"
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, "dmitry_bar@mail.ru", msg.as_string())
-        return jsonify({"status": "ok", "message": "Test email sent"})
+        _resend_send(ADMIN_EMAIL, "LeanPro — тест Resend",
+                     "<p>Тест Resend с Railway. Если дошло — всё работает! ✅</p>")
+        return jsonify({"status": "ok", "sent_to": ADMIN_EMAIL})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/contact", methods=["POST", "OPTIONS"])
 def contact():
-    """Заявка с формы обратной связи → email + Telegram администратору."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
     try:
@@ -373,7 +348,6 @@ def contact():
 
 @app.route("/create-payment", methods=["POST"])
 def create_payment():
-    """Создаёт платёж в ЮКассе."""
     try:
         from yookassa import Configuration, Payment
         import uuid
