@@ -18,7 +18,9 @@ _y1 = "live_rgxZshmuAzc0xAkk6cU"
 _y2 = "FRaD34dVzedVT1CkzL_vCgGI"
 YOOKASSA_SECRET = _y1 + _y2
 
-# Resend API key — заполни после регистрации на resend.com
-RESEND_API_KEY = ""
+GMAIL_USER = "dmitrybar140984" + "@gmail.com"
+_gm1 = "uehj cglt"
+_gm2 = " paro yyes"
+GMAIL_PASS = _gm1 + _gm2
 
 AUTO_POST_TIME = "09:00"

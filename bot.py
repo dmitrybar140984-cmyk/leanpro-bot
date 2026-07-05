@@ -57,8 +57,9 @@ log.info(f"CHANNEL_ID={CHANNEL_ID} | GROUP_ID={GROUP_ID} | ADMIN_IDS={ADMIN_IDS}
 # Переменные для сервера оплаты
 PAY_YK_SECRET    = _env("YOOKASSA_SECRET")
 PAY_YK_SHOP_ID   = _env("YOOKASSA_SHOP_ID")
-PAY_RESEND_KEY   = _env("RESEND_API_KEY")
-log.info(f"Payment vars: YK={'set' if PAY_YK_SECRET else 'MISSING'} Resend={'set' if PAY_RESEND_KEY else 'MISSING'}")
+PAY_GMAIL_USER   = _env("GMAIL_USER")
+PAY_GMAIL_PASS   = _env("GMAIL_PASS")
+log.info(f"Payment vars: YK={'set' if PAY_YK_SECRET else 'MISSING'} Gmail={'set' if PAY_GMAIL_USER else 'MISSING'}")
 
 log.info(f"AI auto-post: {'включён' if GROQ_KEY else 'выключен (нет GROQ_API_KEY)'} в {AUTO_POST_TIME}")
 
@@ -627,7 +628,8 @@ def main():
     import payment_server
     payment_server.YOOKASSA_SECRET  = PAY_YK_SECRET
     payment_server.YOOKASSA_SHOP_ID = PAY_YK_SHOP_ID
-    payment_server.RESEND_API_KEY   = PAY_RESEND_KEY
+    payment_server.GMAIL_USER       = PAY_GMAIL_USER
+    payment_server.GMAIL_PASS       = PAY_GMAIL_PASS
     payment_server.BOT_TOKEN_REF    = BOT_TOKEN
     payment_server.ADMIN_IDS_REF    = ADMIN_IDS
     from payment_server import app as flask_app

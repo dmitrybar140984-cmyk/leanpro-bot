@@ -4,8 +4,8 @@ LeanPro Payment Server
 - /grant       — ручная выдача доступа (admin)
 - /webhook/yookassa — webhook от ЮКассы после оплаты
 - /health      — статус сервера
-- /contact     — заявка с формы обратной связи
-- /test-email  — тест отправки email (отладка)
+- /contact     — заявка с формы обратной связи (только Telegram)
+- /test-email  — тест отправки email покупателю (отладка)
 """
 
 import os
@@ -13,11 +13,12 @@ import json
 import logging
 import random
 import string
-import threading
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 
 import requests
-import resend
 from flask import Flask, request, jsonify
 
 log = logging.getLogger(__name__)
@@ -26,8 +27,10 @@ app = Flask(__name__)
 # ─── CONFIG (значения передаются из bot.py) ───────────────────────────────────
 YOOKASSA_SHOP_ID = ""
 YOOKASSA_SECRET  = ""
-RESEND_API_KEY   = ""
-RESEND_FROM      = "LeanPro <noreply@leanprorus.ru>"
+GMAIL_USER       = ""
+GMAIL_PASS       = ""
+SMTP_HOST        = "smtp.gmail.com"
+SMTP_PORT        = 587
 ADMIN_EMAIL      = "dmitry_bar@mail.ru"
 ADMIN_TOKEN      = "leanpro-admin-2025"
 
@@ -138,58 +141,20 @@ def notify_admin(text: str):
         except Exception as e:
             log.error(f"Telegram notify error: {e}")
 
-def _resend_send(to: str, subject: str, html: str):
-    """Отправляет email через Resend API (HTTPS, порт 443 — работает на Railway)."""
-    if not RESEND_API_KEY:
-        log.warning("RESEND_API_KEY не задан — письмо не отправлено")
-        return
-    resend.api_key = RESEND_API_KEY
-    resend.Emails.send({
-        "from": RESEND_FROM,
-        "to": [to],
-        "subject": subject,
-        "html": html,
-    })
-    log.info(f"Email отправлен через Resend: {to}")
-
-def send_contact_email(name: str, phone: str, email: str, course: str, message: str):
-    """Отправляет заявку с сайта на email администратора."""
-    subject_course = f" — {course}" if course else ""
-    subject = f"Новая заявка с сайта: {name}{subject_course}"
-    message_block = (
-        f"<div style='margin-top:16px;padding:16px;background:#fff;"
-        f"border-radius:6px;border:1px solid #e2e8f0'>{message}</div>"
-        if message else ""
-    )
-    html = f"""
-<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e293b">
-  <div style="background:#0f4c81;padding:24px 32px;border-radius:8px 8px 0 0">
-    <h1 style="color:#fff;margin:0;font-size:22px">&#x2B21; LeanPro — Новая заявка</h1>
-  </div>
-  <div style="background:#f8fafc;padding:32px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
-    <table style="width:100%;border-collapse:collapse">
-      <tr><td style="padding:8px 0;color:#64748b;width:120px">Имя</td>
-          <td style="padding:8px 0;font-weight:bold">{name}</td></tr>
-      <tr><td style="padding:8px 0;color:#64748b">Телефон</td>
-          <td style="padding:8px 0">{phone or '—'}</td></tr>
-      <tr><td style="padding:8px 0;color:#64748b">Email</td>
-          <td style="padding:8px 0"><a href="mailto:{email}">{email or '—'}</a></td></tr>
-      <tr><td style="padding:8px 0;color:#64748b">Курс</td>
-          <td style="padding:8px 0">{course or '—'}</td></tr>
-    </table>
-    {message_block}
-  </div>
-</div>"""
-    _resend_send(ADMIN_EMAIL, subject, html)
-
 def send_email(to_email: str, course_id: str, code: str):
-    """Отправляет письмо с кодом доступа покупателю."""
+    """Отправляет код доступа покупателю через Gmail SMTP."""
+    if not GMAIL_USER or not GMAIL_PASS:
+        log.warning("Gmail не настроен — письмо не отправлено")
+        return
     course_name = COURSE_NAMES.get(course_id, course_id)
-    subject = f"Ваш доступ к курсу «{course_name}» — LeanPro"
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Ваш доступ к курсу «{course_name}» — LeanPro"
+    msg["From"]    = f"LeanPro <{GMAIL_USER}>"
+    msg["To"]      = to_email
     html = f"""
 <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e293b">
   <div style="background:#0f4c81;padding:24px 32px;border-radius:8px 8px 0 0">
-    <h1 style="color:#fff;margin:0;font-size:22px">&#x2B21; LeanPro</h1>
+    <h1 style="color:#fff;margin:0;font-size:22px">LeanPro</h1>
   </div>
   <div style="background:#f8fafc;padding:32px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
     <h2 style="margin-top:0">Доступ к курсу открыт!</h2>
@@ -206,11 +171,16 @@ def send_email(to_email: str, course_id: str, code: str):
        text-decoration:none;font-weight:bold">Перейти к курсу →</a>
     <p style="margin-top:32px;font-size:13px;color:#64748b">
       Код привязан к вашему email.<br>
-      Вопросы: <a href="mailto:dmitry_bar@mail.ru">dmitry_bar@mail.ru</a>
+      Вопросы: <a href="mailto:{ADMIN_EMAIL}">{ADMIN_EMAIL}</a>
     </p>
   </div>
 </div>"""
-    _resend_send(to_email, subject, html)
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        server.starttls()
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.sendmail(GMAIL_USER, to_email, msg.as_string())
+    log.info(f"Email отправлен: {to_email}")
 
 # ─── ROUTES ──────────────────────────────────────────────────────────────────
 
@@ -226,7 +196,7 @@ def health():
     codes = load_codes()
     total = sum(len(v) for v in codes.values())
     return jsonify({"status": "ok", "total_codes": total,
-                    "resend": "set" if RESEND_API_KEY else "not set",
+                    "email": "set" if GMAIL_USER else "not set",
                     "telegram": "set" if BOT_TOKEN_REF else "not set"})
 
 @app.route("/verify", methods=["POST", "OPTIONS"])
@@ -292,6 +262,7 @@ def yookassa_webhook():
             send_email(email, course_id, code)
         except Exception as e:
             log.error(f"Email error: {e}")
+            notify_admin(f"⚠️ <b>Ошибка отправки email</b> покупателю {email}:\n<code>{e}</code>")
         notify_admin(
             f"🎉 <b>Новая оплата!</b>\n"
             f"📧 {email}\n📚 {COURSE_NAMES.get(course_id, course_id)}\n🔑 <code>{code}</code>"
@@ -303,18 +274,16 @@ def yookassa_webhook():
 
 @app.route("/test-email")
 def test_email():
-    """Тест Resend — открыть в браузере для проверки."""
-    if not RESEND_API_KEY:
-        return jsonify({"error": "RESEND_API_KEY not set"}), 500
+    """Тест Gmail SMTP — открыть в браузере."""
     try:
-        _resend_send(ADMIN_EMAIL, "LeanPro — тест Resend",
-                     "<p>Тест Resend с Railway. Если дошло — всё работает! ✅</p>")
+        send_email(ADMIN_EMAIL, "lean-intro", "TEST-1234")
         return jsonify({"status": "ok", "sent_to": ADMIN_EMAIL})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/contact", methods=["POST", "OPTIONS"])
 def contact():
+    """Заявка с формы — только Telegram, email не нужен."""
     if request.method == "OPTIONS":
         return jsonify({}), 200
     try:
@@ -326,13 +295,6 @@ def contact():
         message = body.get("message", "").strip()
         if not name:
             return jsonify({"error": "name required"}), 400
-        def _send_mail():
-            try:
-                send_contact_email(name, phone, email, course, message)
-            except Exception as e:
-                log.error(f"Contact email error: {e}")
-                notify_admin(f"⚠️ <b>Ошибка отправки email</b> (заявка от {name}):\n<code>{e}</code>")
-        threading.Thread(target=_send_mail, daemon=True).start()
         notify_admin(
             f"📩 <b>Новая заявка с сайта</b>\n"
             f"👤 {name}\n"
