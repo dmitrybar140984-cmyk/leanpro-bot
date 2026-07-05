@@ -29,7 +29,7 @@ YOOKASSA_SECRET  = ""
 SMTP_USER        = ""
 SMTP_PASSWORD    = ""
 SMTP_HOST        = "smtp.yandex.ru"
-SMTP_PORT        = 465
+SMTP_PORT        = 587
 ADMIN_TOKEN      = "leanpro-admin-2025"
 
 # BOT_TOKEN и ADMIN_IDS передаются из bot.py для Telegram-уведомлений
@@ -179,7 +179,8 @@ def send_contact_email(name: str, phone: str, email: str, course: str, message: 
   </div>
 </div>"""
     msg.attach(MIMEText(html, "html", "utf-8"))
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        server.starttls()
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.sendmail(SMTP_USER, admin_email, msg.as_string())
     log.info(f"Contact email: {name} ({email})")
@@ -219,7 +220,8 @@ def send_email(to_email: str, course_id: str, code: str):
   </div>
 </div>"""
     msg.attach(MIMEText(html, "html", "utf-8"))
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        server.starttls()
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.sendmail(SMTP_USER, to_email, msg.as_string())
     log.info(f"Email отправлен: {to_email}")
@@ -317,6 +319,24 @@ def yookassa_webhook():
         log.exception(f"Webhook error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/test-smtp")
+def test_smtp():
+    """Тест SMTP — только для отладки, вызвать вручную."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        return jsonify({"error": "SMTP not configured"}), 500
+    try:
+        msg = MIMEText("Тест SMTP с Railway. Если письмо дошло — всё работает.", "plain", "utf-8")
+        msg["Subject"] = "LeanPro SMTP test"
+        msg["From"]    = SMTP_USER
+        msg["To"]      = "dmitry_bar@mail.ru"
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, "dmitry_bar@mail.ru", msg.as_string())
+        return jsonify({"status": "ok", "message": "Test email sent"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/contact", methods=["POST", "OPTIONS"])
 def contact():
     """Заявка с формы обратной связи → email + Telegram администратору."""
@@ -336,6 +356,7 @@ def contact():
                 send_contact_email(name, phone, email, course, message)
             except Exception as e:
                 log.error(f"Contact email error: {e}")
+                notify_admin(f"⚠️ <b>Ошибка отправки email</b> (заявка от {name}):\n<code>{e}</code>")
         threading.Thread(target=_send_mail, daemon=True).start()
         notify_admin(
             f"📩 <b>Новая заявка с сайта</b>\n"
