@@ -16,6 +16,7 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+import threading
 import requests
 from flask import Flask, request, jsonify
 
@@ -330,10 +331,12 @@ def contact():
         message = body.get("message", "").strip()
         if not name:
             return jsonify({"error": "name required"}), 400
-        try:
-            send_contact_email(name, phone, email, course, message)
-        except Exception as e:
-            log.error(f"Contact email error: {e}")
+        def _send_mail():
+            try:
+                send_contact_email(name, phone, email, course, message)
+            except Exception as e:
+                log.error(f"Contact email error: {e}")
+        threading.Thread(target=_send_mail, daemon=True).start()
         notify_admin(
             f"📩 <b>Новая заявка с сайта</b>\n"
             f"👤 {name}\n"
