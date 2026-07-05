@@ -59,7 +59,9 @@ PAY_YK_SECRET    = _env("YOOKASSA_SECRET")
 PAY_YK_SHOP_ID   = _env("YOOKASSA_SHOP_ID")
 PAY_GMAIL_USER   = _env("GMAIL_USER")
 PAY_GMAIL_PASS   = _env("GMAIL_PASS")
-log.info(f"Payment vars: YK={'set' if PAY_YK_SECRET else 'MISSING'} Gmail={'set' if PAY_GMAIL_USER else 'MISSING'}")
+PAY_YA_API_KEY   = _env("YANDEX_API_KEY")
+PAY_YA_FOLDER_ID = _env("YANDEX_FOLDER_ID")
+log.info(f"Payment vars: YK={'set' if PAY_YK_SECRET else 'MISSING'} Gmail={'set' if PAY_GMAIL_USER else 'MISSING'} YaTTS={'set' if PAY_YA_API_KEY else 'MISSING'}")
 
 log.info(f"AI auto-post: {'включён' if GROQ_KEY else 'выключен (нет GROQ_API_KEY)'} в {AUTO_POST_TIME}")
 
@@ -630,6 +632,8 @@ def main():
     payment_server.YOOKASSA_SHOP_ID = PAY_YK_SHOP_ID
     payment_server.GMAIL_USER       = PAY_GMAIL_USER
     payment_server.GMAIL_PASS       = PAY_GMAIL_PASS
+    payment_server.YANDEX_API_KEY   = PAY_YA_API_KEY
+    payment_server.YANDEX_FOLDER_ID = PAY_YA_FOLDER_ID
     payment_server.BOT_TOKEN_REF    = BOT_TOKEN
     payment_server.ADMIN_IDS_REF    = ADMIN_IDS
     from payment_server import app as flask_app

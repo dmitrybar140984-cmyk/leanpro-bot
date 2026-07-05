@@ -19,7 +19,7 @@ from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 
 log = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -33,6 +33,9 @@ SMTP_HOST        = "smtp.gmail.com"
 SMTP_PORT        = 587
 ADMIN_EMAIL      = "dmitry_bar@mail.ru"
 ADMIN_TOKEN      = "leanpro-admin-2025"
+
+YANDEX_API_KEY   = ""
+YANDEX_FOLDER_ID = ""
 
 # BOT_TOKEN и ADMIN_IDS передаются из bot.py для Telegram-уведомлений
 BOT_TOKEN_REF    = ""
@@ -190,6 +193,38 @@ def add_cors(response):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
+
+@app.route("/tts", methods=["POST", "OPTIONS"])
+def tts():
+    if request.method == "OPTIONS":
+        return "", 204
+    if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
+        return jsonify({"error": "TTS not configured"}), 503
+    data = request.get_json(force=True, silent=True) or {}
+    text = str(data.get("text", "")).strip()[:600]
+    if not text:
+        return jsonify({"error": "no text"}), 400
+    try:
+        resp = requests.post(
+            "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize",
+            headers={"Authorization": f"Api-Key {YANDEX_API_KEY}"},
+            data={
+                "text": text,
+                "lang": "ru-RU",
+                "voice": "filipp",
+                "folderId": YANDEX_FOLDER_ID,
+                "format": "mp3",
+                "speed": "0.92",
+            },
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            log.error(f"Yandex TTS error {resp.status_code}: {resp.text[:200]}")
+            return jsonify({"error": "TTS upstream error"}), 502
+        return Response(resp.content, status=200, mimetype="audio/mpeg")
+    except Exception as e:
+        log.error(f"TTS exception: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/health", methods=["GET"])
 def health():
