@@ -227,7 +227,7 @@ def tts():
         )
         if resp.status_code != 200:
             log.error(f"Yandex TTS error {resp.status_code}: {resp.text[:200]}")
-            return jsonify({"error": "TTS upstream error"}), 502
+            return jsonify({"error": "TTS upstream error", "yandex_status": resp.status_code, "yandex_response": resp.text[:500]}), 502
         return Response(resp.content, status=200, mimetype="audio/mpeg")
     except Exception as e:
         log.error(f"TTS exception: {e}")
