@@ -142,6 +142,47 @@ def notify_admin(text: str):
         except Exception as e:
             log.error(f"Telegram notify error: {e}")
 
+def send_contact_email(name: str, phone: str, email: str, course: str, message: str):
+    """Отправляет заявку с сайта на email администратора."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        log.warning("SMTP не настроен — уведомление не отправлено")
+        return
+    admin_email = "dmitry_bar@mail.ru"
+    msg = MIMEMultipart("alternative")
+    subject_course = f" — {course}" if course else ""
+    msg["Subject"] = f"Новая заявка с сайта: {name}{subject_course}"
+    msg["From"]    = SMTP_USER
+    msg["To"]      = admin_email
+    message_block = (
+        f"<div style='margin-top:16px;padding:16px;background:#fff;"
+        f"border-radius:6px;border:1px solid #e2e8f0'>{message}</div>"
+        if message else ""
+    )
+    html = f"""
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e293b">
+  <div style="background:#0f4c81;padding:24px 32px;border-radius:8px 8px 0 0">
+    <h1 style="color:#fff;margin:0;font-size:22px">&#x2B21; LeanPro — Новая заявка</h1>
+  </div>
+  <div style="background:#f8fafc;padding:32px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td style="padding:8px 0;color:#64748b;width:120px">Имя</td>
+          <td style="padding:8px 0;font-weight:bold">{name}</td></tr>
+      <tr><td style="padding:8px 0;color:#64748b">Телефон</td>
+          <td style="padding:8px 0">{phone or '—'}</td></tr>
+      <tr><td style="padding:8px 0;color:#64748b">Email</td>
+          <td style="padding:8px 0"><a href="mailto:{email}">{email or '—'}</a></td></tr>
+      <tr><td style="padding:8px 0;color:#64748b">Курс</td>
+          <td style="padding:8px 0">{course or '—'}</td></tr>
+    </table>
+    {message_block}
+  </div>
+</div>"""
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(SMTP_USER, admin_email, msg.as_string())
+    log.info(f"Contact email: {name} ({email})")
+
 def send_email(to_email: str, course_id: str, code: str):
     """Отправляет письмо с кодом доступа покупателю."""
     if not SMTP_USER or not SMTP_PASSWORD:
@@ -273,6 +314,37 @@ def yookassa_webhook():
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         log.exception(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/contact", methods=["POST", "OPTIONS"])
+def contact():
+    """Заявка с формы обратной связи → email + Telegram администратору."""
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    try:
+        body    = request.get_json(force=True)
+        name    = body.get("name", "").strip()
+        phone   = body.get("phone", "").strip()
+        email   = body.get("email", "").strip()
+        course  = body.get("course", "").strip()
+        message = body.get("message", "").strip()
+        if not name:
+            return jsonify({"error": "name required"}), 400
+        try:
+            send_contact_email(name, phone, email, course, message)
+        except Exception as e:
+            log.error(f"Contact email error: {e}")
+        notify_admin(
+            f"📩 <b>Новая заявка с сайта</b>\n"
+            f"👤 {name}\n"
+            f"📞 {phone or '—'}\n"
+            f"📧 {email or '—'}\n"
+            f"📚 {course or '—'}\n"
+            f"💬 {message or '—'}"
+        )
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        log.error(f"contact error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/create-payment", methods=["POST"])
