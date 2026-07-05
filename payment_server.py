@@ -308,6 +308,23 @@ def contact():
         log.error(f"contact error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/get-code", methods=["POST", "OPTIONS"])
+def get_code():
+    """Возвращает код доступа если он уже выдан (для thank-you страницы)."""
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    body      = request.get_json(force=True)
+    email     = body.get("email", "").strip().lower()
+    course_id = body.get("course_id", "").strip()
+    if not email or not course_id:
+        return jsonify({"ok": False, "error": "missing fields"}), 400
+    codes = load_codes()
+    code  = codes.get(course_id, {}).get(email)
+    if code:
+        return jsonify({"ok": True, "code": code,
+                        "course": COURSE_NAMES.get(course_id, course_id)})
+    return jsonify({"ok": False}), 404
+
 @app.route("/create-payment", methods=["POST"])
 def create_payment():
     try:
@@ -327,7 +344,7 @@ def create_payment():
         payment = Payment.create({
             "amount": {"value": amount, "currency": "RUB"},
             "confirmation": {"type": "redirect",
-                             "return_url": f"https://leanprorus.ru/thank-you.html?course={course_id}"},
+                             "return_url": f"https://leanprorus.ru/thank-you.html?course={course_id}&email={email}"},
             "capture": True,
             "description": f"Курс «{course_name}»",
             "receipt": {"customer": {"email": email},
