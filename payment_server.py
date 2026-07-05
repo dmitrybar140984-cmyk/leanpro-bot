@@ -198,7 +198,10 @@ def add_cors(response):
 def tts():
     if request.method == "OPTIONS":
         return "", 204
-    if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
+    ya_key = os.environ.get("YANDEX_API_KEY") or YANDEX_API_KEY
+    ya_folder = os.environ.get("YANDEX_FOLDER_ID") or YANDEX_FOLDER_ID
+    if not ya_key or not ya_folder:
+        log.error(f"TTS not configured: key={'set' if ya_key else 'MISSING'} folder={'set' if ya_folder else 'MISSING'}")
         return jsonify({"error": "TTS not configured"}), 503
     data = request.get_json(force=True, silent=True) or {}
     text = str(data.get("text", "")).strip()[:600]
@@ -207,12 +210,12 @@ def tts():
     try:
         resp = requests.post(
             "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize",
-            headers={"Authorization": f"Api-Key {YANDEX_API_KEY}"},
+            headers={"Authorization": f"Api-Key {ya_key}"},
             data={
                 "text": text,
                 "lang": "ru-RU",
                 "voice": "filipp",
-                "folderId": YANDEX_FOLDER_ID,
+                "folderId": ya_folder,
                 "format": "mp3",
                 "speed": "0.92",
             },
