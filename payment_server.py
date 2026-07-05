@@ -198,8 +198,12 @@ def add_cors(response):
 def tts():
     if request.method == "OPTIONS":
         return "", 204
-    ya_key = os.environ.get("YANDEX_API_KEY") or YANDEX_API_KEY
-    ya_folder = os.environ.get("YANDEX_FOLDER_ID") or YANDEX_FOLDER_ID
+    try:
+        import cfg as _cfg
+    except ImportError:
+        _cfg = None
+    ya_key = os.environ.get("YANDEX_API_KEY") or YANDEX_API_KEY or getattr(_cfg, "YANDEX_API_KEY", "")
+    ya_folder = os.environ.get("YANDEX_FOLDER_ID") or YANDEX_FOLDER_ID or getattr(_cfg, "YANDEX_FOLDER_ID", "")
     if not ya_key or not ya_folder:
         log.error(f"TTS not configured: key={'set' if ya_key else 'MISSING'} folder={'set' if ya_folder else 'MISSING'}")
         return jsonify({"error": "TTS not configured"}), 503

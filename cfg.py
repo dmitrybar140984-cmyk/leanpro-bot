@@ -24,3 +24,8 @@ _gm2 = " paro yyes"
 GMAIL_PASS = _gm1 + _gm2
 
 AUTO_POST_TIME = "09:00"
+
+_ya1 = "AQVN2pQAH2hlqU"
+_ya2 = "6Y5M9-HL9EfDccdbogIljuv-Ct"
+YANDEX_API_KEY   = _ya1 + _ya2
+YANDEX_FOLDER_ID = "b1gecifbubnr0oin1e3f"
